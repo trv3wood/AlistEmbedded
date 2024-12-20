@@ -14,8 +14,7 @@
       {
         "title": "Alist",
         "url": "http://localhost:5244",
-        "width": 1920,
-        "height": 1080,
+        "maximized": true,
         "resizable": true
       }
     ],
