@@ -1,21 +1,39 @@
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
-#[tauri::command]
-fn greet(name: &str) -> String {
-    format!("Hello, {}! You've been greeted from Rust!", name)
-}
-
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
+use std::process::{exit, Child};
+use tauri::Manager;
+
 pub fn run() {
     tauri::Builder::default()
+        .setup(|app| {
+            let child = init().unwrap_or_else(|e| {
+                eprintln!("{:?}", e);
+                exit(-1);
+            });
+            app.manage(Mutex::new(child));
+            Ok(())
+        })
+        .on_window_event(|app, event| match event {
+            tauri::WindowEvent::Destroyed => {
+                let child = app.state::<Mutex<Child>>();
+                let mut child = child.try_lock().unwrap_or_else(|e| {
+                    eprintln!("{:?}", e);
+                    exit(-1);
+                });
+                child.kill().expect("Failed to kill child process");
+            }
+            _ => {}
+        })
         .plugin(tauri_plugin_shell::init())
-        .invoke_handler(tauri::generate_handler![greet])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
 use std::{
     env,
     io::{BufRead, BufReader},
-    process::{self, Command, Stdio},
+    os::windows::process::CommandExt,
+    process::{Command, Stdio},
+    sync::Mutex,
     thread::spawn,
 };
 
@@ -27,7 +45,7 @@ fn find_alist_path<'a>(path_env: &'a str) -> &'a str {
 }
 
 #[derive(Debug)]
-pub struct AppConfig<'a> {
+struct AppConfig<'a> {
     pub path: &'a str,
     pub storage_count: usize,
 }
@@ -69,10 +87,11 @@ impl<'a> AppConfig<'a> {
     }
 }
 
-pub fn init() -> std::io::Result<()> {
+fn init() -> std::io::Result<Child> {
     let env_path = env::var("PATH").unwrap();
     let config = AppConfig::from_env(&env_path)?;
-    let mut alist_service = process::Command::new("alist")
+    let mut alist_service = Command::new("alist")
+        .creation_flags(0x08000000)
         .current_dir(config.path)
         .arg("server")
         .stderr(Stdio::piped())
@@ -95,12 +114,12 @@ pub fn init() -> std::io::Result<()> {
     });
     listening_child.join().unwrap();
     println!("Alist server is running!");
-    Ok(())
+    Ok(alist_service)
 }
 
 #[cfg(test)]
 mod tests {
-    use std::{env::var, thread::spawn};
+    use std::{env::var, process, thread::spawn};
 
     use super::*;
     #[test]
